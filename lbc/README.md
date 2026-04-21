@@ -11,9 +11,11 @@ The previous `lbc.py` chained DuckDuckGo / Startpage fallbacks because the raw
 datacenter IP. Those fallbacks gave partial, noisy data (no prices or rough
 dates at best).
 
-Leboncoin's `/recherche` page, however, is **server-rendered with Next.js** and
-embeds the *exact same* search payload the mobile app sees in a
-`<script id="__NEXT_DATA__">` JSON blob:
+Leboncoin's `/recherche` page is **server-rendered with Next.js App Router**
+and streams the full search payload as RSC (React Server Component) chunks.
+Those chunks accumulate in the page's `self.__next_f` array, and concatenating
+them yields a blob containing a `"searchData":{...}` object identical in shape
+to what the old Pages-Router `__NEXT_DATA__` exposed:
 
 ```
 props.pageProps.searchData.ads[i] = {
@@ -30,8 +32,14 @@ props.pageProps.searchData.ads[i] = {
 ```
 
 So the strategy becomes: **drive a real Chromium** (so Datadome is satisfied),
-navigate to the URL, parse `__NEXT_DATA__`. That's exactly what this package
-does.
+navigate to the URL, wait for the RSC stream to arrive, read `self.__next_f`
+from inside the page, and bracket-match the `searchData` JSON out of it. A
+DOM-scrape fallback covers the (rare) case where the stream key name drifts.
+
+> We previously tried calling `https://api.leboncoin.fr/finder/search` directly
+> via in-browser `fetch()`. Datadome now 403s that endpoint for browser
+> callers — it's become mobile-only. The SSR-stream path is the only reliable
+> shape as of April 2026.
 
 ### Browser engine chosen
 
