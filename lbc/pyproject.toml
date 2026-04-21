@@ -10,12 +10,16 @@ dependencies = [
     "rich>=13.9.4",
     "httpx>=0.28.1",
     "platformdirs>=4.3.6",
+    "pyyaml>=6.0.2",
+    "python-telegram-bot>=21.10",
+    "python-dotenv>=1.1.0",
     "fastapi>=0.115.0",
     "uvicorn[standard]>=0.34.0",
 ]
 
 [project.scripts]
 lbc = "lbc.cli:app"
+lbc-bot = "lbc.bot:main"
 lbc-api = "uvicorn:main"
 
 [build-system]

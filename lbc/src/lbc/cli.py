@@ -15,9 +15,12 @@ from __future__ import annotations
 
 import json
 import sys
+from enum import Enum
+from pathlib import Path
 from typing import Optional
 
 import typer
+import yaml
 from rich.console import Console
 from rich.table import Table
 from rich.text import Text
@@ -40,6 +43,22 @@ app = typer.Typer(
     no_args_is_help=True,
 )
 console = Console()
+
+
+class Fmt(str, Enum):
+    pretty = "pretty"
+    json = "json"
+    yaml = "yaml"
+
+
+def _emit(payload, fmt: Fmt) -> None:
+    """Dump structured data in the chosen format."""
+    if fmt is Fmt.json:
+        typer.echo(json.dumps(payload, indent=2, ensure_ascii=False, default=str))
+    elif fmt is Fmt.yaml:
+        typer.echo(yaml.safe_dump(
+            payload, sort_keys=False, allow_unicode=True, default_flow_style=False
+        ))
 
 
 def _version_cb(value: bool) -> None:
@@ -77,12 +96,22 @@ def search(
     price_max: Optional[int] = typer.Option(None, "--price-max"),
     owner: Optional[str] = typer.Option(None, "--owner",
         help="private | pro | all"),
-    as_json: bool = typer.Option(False, "--json", "-j", help="Emit JSON"),
+    fmt: Fmt = typer.Option(Fmt.pretty, "--format", "-f",
+        case_sensitive=False, help="pretty | json | yaml"),
+    as_json: bool = typer.Option(False, "--json", "-j", help="Shortcut for --format json"),
+    as_yaml: bool = typer.Option(False, "--yaml", "-y", help="Shortcut for --format yaml"),
     headed: bool = typer.Option(False, "--headed", help="Show the browser (debug)"),
+    debug: Optional[Path] = typer.Option(None, "--debug",
+        help="Dump raw HTML / scripts from the extractor into this dir for inspection"),
     open_url: bool = typer.Option(False, "--show-url",
         help="Print the resolved Leboncoin URL and exit"),
 ) -> None:
     """Search Leboncoin listings."""
+    if as_json:
+        fmt = Fmt.json
+    elif as_yaml:
+        fmt = Fmt.yaml
+
     kwargs = dict(
         text=query, category=category, lat=lat, lng=lng, radius_m=radius,
         sort=sort, order=order, price_min=price_min, price_max=price_max,
@@ -93,17 +122,16 @@ def search(
         raise typer.Exit()
 
     try:
-        with BrowserSession(headless=not headed) as browser:
+        with BrowserSession(headless=not headed, debug_dir=debug) as browser:
             ads = list(search_paginated(browser, max_results=limit, page=page, **kwargs))
     except RuntimeError as e:
         console.print(f"[red]error:[/red] {e}", highlight=False)
         raise typer.Exit(code=2)
 
-    if as_json:
-        typer.echo(json.dumps([a.to_json() for a in ads], indent=2, ensure_ascii=False, default=str))
-        return
-
-    _render_table(query, ads)
+    if fmt is Fmt.pretty:
+        _render_table(query, ads)
+    else:
+        _emit([a.to_json() for a in ads], fmt)
 
 
 def _render_table(query: str, ads: list[Ad]) -> None:
@@ -133,14 +161,21 @@ def _render_table(query: str, ads: list[Ad]) -> None:
 @app.command()
 def info(
     ad_id: str = typer.Argument(..., help="Leboncoin ad id, e.g. 3140748683"),
-    as_json: bool = typer.Option(False, "--json", "-j"),
+    fmt: Fmt = typer.Option(Fmt.pretty, "--format", "-f",
+        case_sensitive=False, help="pretty | json | yaml"),
+    as_json: bool = typer.Option(False, "--json", "-j", help="Shortcut for --format json"),
+    as_yaml: bool = typer.Option(False, "--yaml", "-y", help="Shortcut for --format yaml"),
     headed: bool = typer.Option(False, "--headed"),
 ) -> None:
     """Fetch full details for a single ad."""
+    if as_json:
+        fmt = Fmt.json
+    elif as_yaml:
+        fmt = Fmt.yaml
     with BrowserSession(headless=not headed) as browser:
         ad = fetch_ad(browser, ad_id)
-    if as_json:
-        typer.echo(json.dumps(ad.to_json(), indent=2, ensure_ascii=False, default=str))
+    if fmt is not Fmt.pretty:
+        _emit(ad.to_json(), fmt)
         return
     console.print(Text(ad.title, style="bold"))
     price = f"{ad.price:,} €".replace(",", " ") if ad.price is not None else "—"
@@ -207,17 +242,23 @@ def send(
 @app.command()
 def inbox(
     limit: int = typer.Option(20, "--limit", "-n"),
+    fmt: Fmt = typer.Option(Fmt.pretty, "--format", "-f", case_sensitive=False),
     as_json: bool = typer.Option(False, "--json", "-j"),
+    as_yaml: bool = typer.Option(False, "--yaml", "-y"),
     headed: bool = typer.Option(False, "--headed"),
 ) -> None:
     """List recent conversations from your Leboncoin inbox."""
+    if as_json:
+        fmt = Fmt.json
+    elif as_yaml:
+        fmt = Fmt.yaml
     with BrowserSession(headless=not headed) as browser:
         if not is_logged_in(browser):
             console.print("[red]Not signed in.[/red] Run `lbc login` first.")
             raise typer.Exit(code=2)
         convs = list(list_inbox(browser, limit=limit))
-    if as_json:
-        typer.echo(json.dumps(convs, indent=2, ensure_ascii=False, default=str))
+    if fmt is not Fmt.pretty:
+        _emit(convs, fmt)
         return
     if not convs:
         console.print("[yellow]empty inbox (or the inbox schema changed — try --json).[/yellow]")
@@ -245,6 +286,13 @@ def inbox(
 def where() -> None:
     """Print the path of the persistent browser profile."""
     typer.echo(str(profile_dir()))
+
+
+@app.command()
+def bot() -> None:
+    """Start the Telegram bot (reads TELEGRAM_BOT_TOKEN from .env)."""
+    from .bot import main as bot_main
+    bot_main()
 
 
 def main() -> None:  # entry point for `python -m lbc`

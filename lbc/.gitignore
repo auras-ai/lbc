@@ -8,3 +8,14 @@ wheels/
 
 # Virtual environments
 .venv
+
+# Secrets
+.env
+
+# Temp output files
+*.yml
+!docker-compose.yml
+cybex_ads_raw.py
+
+# Keep cybex results (tracked explicitly)
+!cybex_results.yml
